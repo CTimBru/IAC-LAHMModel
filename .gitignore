@@ -1,6 +1,12 @@
 # Project file
 *.Rproj
 
+# Complete datasets
+.fullDatasets/
+
+# rvar
+rvar/
+
 # History files
 .Rhistory
 .Rapp.history
