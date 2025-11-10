@@ -4,6 +4,9 @@
 # Complete datasets
 .fullDatasets/
 
+# Sensitive datasets
+.SENSITIVE/
+
 # rvar
 rvar/
 

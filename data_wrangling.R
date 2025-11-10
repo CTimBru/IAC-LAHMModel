@@ -295,7 +295,8 @@ if(file.exists(paste0(data_dir,"WUI.tif"))){
 #We are just interested in location & building age
 
 if(file.exists(paste0(data_dir,"ParcelData_2021.csv"))){
-  LA_County_Parcels <- read_csv(paste0(data_dir,"ParcelData_2021.csv"))
+  LA_County_Parcels <- paste0(data_dir,list.files(path=data_dir,pattern="ParcelData_2021_.*\\.csv$")) %>%
+    lapply(read_csv) %>% bind_rows()
 } else  {
   LA_County_Parcels <- read_csv(paste0(assessor_dir,"/Parcel_Data_2021_Table_8468414499611436475.csv"))
   #Zip Code...1: 9 digit zip
@@ -303,9 +304,27 @@ if(file.exists(paste0(data_dir,"ParcelData_2021.csv"))){
   #Year Built: Year 50%+ of the original structure was complete
   #Effective Year: Last year of any 'substantial' new construction or major rehabilitation.
   LA_County_Parcels <- LA_County_Parcels[c('Zip Code...1','Property Use Type','Year Built','Effective Year','Location Latitude','Location Longitude')] %>% as_tibble(.name_repair = 'universal')
-  write_csv(LA_County_Parcels,paste0(".fullDatasets/ParcelData_2021.csv"))
+  
+  #Split into 5 csv
+  rowCount <- nrow(LA_County_Parcels)
+  splits <- 6
+  rowGroups <- cut(
+    seq_len(rowCount),
+    breaks = splits,
+    labels = FALSE
+  )
+  split_list <- split(LA_County_Parcels,rowGroups)
+  
+  i <- 1
+  while(i < splits+1){
+    write_csv(split_list[[i]],paste0("LA_Data/ParcelData_2021_",i,".csv"))
+    i <- i + 1
+  }
+  
 }
 
-#Cali Bounding Box + floor() ceiling()
-#-124.41060660766607,32.5342307609976,-114.13445790587905,42.00965914828148: https://observablehq.com/@rdmurphy/u-s-state-bounding-boxes
-#-125,32,-114,42
+#VII) Lead Data
+#nb Lead data is not a part of this git
+sensitive_dir <- RVar_sensitive
+sensitive_filename <- RVar_sensitive_filename
+read_csv(paste0(RVar_sensitive,RVar_sensitive_filename))
