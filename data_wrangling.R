@@ -9,9 +9,11 @@ require(sf) #For geospatial encoding: https://r-spatial.github.io/sf/reference/i
 require(terra) # For spatial analysis: https://rspatial.org/pkg/index.html
 require(fs) # File tools: https://www.rdocumentation.org/packages/fs/versions/1.6.6
 #require(ff) # File tools: https://www.rdocumentation.org/packages/ff/versions/1.0-1
-require(geodata) # Grab bioclim data for USA only: https://cran.r-project.org/web/packages/geodata/refman/geodata.html
+require(geodata) # Grab elevation data: https://cran.r-project.org/web/packages/geodata/refman/geodata.html
 require(future.apply) # Multithreading, not great on Windows 11: https://cran.r-project.org/web/packages/future.apply/refman/future.apply.html
 require(tidyverse) # Dataframes: https://www.rdocumentation.org/packages/tidyverse/versions/2.0.0
+require(corrplot) # Correlation plots: https://www.rdocumentation.org/packages/corrplot/versions/0.95
+library(caret) # Find correlations about |p| > 0.7: https://www.rdocumentation.org/packages/caret/versions/7.0-1
 
 # Load users working directory
 source("rvar/var.R")
@@ -107,7 +109,23 @@ unzip(".fullDatasets/wc2.1_30s_bio.zip", overwrite=TRUE, exdir=BioClim_dir)
 
 #Delete after Cropping
 
-# VI) LA County assessor data
+WorldClim_dir <- ".fullDatasets/Worldclim"
+
+unzip(".fullDatasets/wc2.1_30s_prec.zip", overwrite=TRUE, exdir=WorldClim_dir)
+unzip(".fullDatasets/wc2.1_30s_srad.zip", overwrite=TRUE, exdir=WorldClim_dir)
+unzip(".fullDatasets/wc2.1_30s_wind.zip", overwrite=TRUE, exdir=WorldClim_dir)
+
+#Delete after Cropping
+
+#VII) Terrain data
+elevation_dir <- ".fullDatasets/Elevation"
+#Download Elevation data in approximate LA Area.
+#lon=mean(st_bbox(LA_County_Perimeter)[c(1,3)]),lat=mean(st_bbox(LA_County_Perimeter)[c(2,4)])
+elevation_3s(lon=-118.2991,lat=33.78668,path='.fullDatasets')
+#https://srtm.csi.cgiar.org/wp-content/uploads/files/srtm_5x5/TIFF/srtm_13_06.zip wget if the download fails, server close to the internet backbone works.
+unzip(".fullDatasets/srtm_13_06.zip", overwrite=TRUE, exdir=elevation_dir)
+
+# VIII) LA County assessor data
 # Data: https://data.lacounty.gov/datasets/lacounty::assessor-parcel-data-rolls-2021-present/about
 assessor_dir <- ".fullDatasets/Assessor"
 
@@ -265,11 +283,12 @@ if(file.exists(paste0(data_dir,"WHP.tif"))){
 }
 # V) Bioclim
 # Check the data dir if bioclims are already processed
-if(file.exists(paste0(data_dir,"WUI.tif"))){
-  LA_County_WUI <- raster(paste0(data_dir,"WUI.tif"))
+if(file.exists(paste0(data_dir,"wc2.1_30s_bio_9.tif"))){
+  bioclim_rasters <- paste0(data_dir,list.files(path=data_dir,pattern="wc2.1_30s_bio_.*\\.tif$")) %>%
+    stack()
 } else  {
   bioclim_list <- list.files(path=data_dir,pattern="\\bwc2.1_30s_bio.*")
-  while(length(bioclim_list)<19){
+  if(length(bioclim_list)<19){
     # Set list to source dir
     bioclim_list <- list.files(path=BioClim_dir,pattern="\\bwc2.1_30s_bio.*")
     for(bioclim in bioclim_list){
@@ -288,26 +307,89 @@ if(file.exists(paste0(data_dir,"WUI.tif"))){
       } else {print('Coordinate system requires reprojection to continue!')}
     }
   }
+  bioclim_rasters <- paste0(data_dir,list.files(path=data_dir,pattern="wc2.1_30s_bio_.*\\.tif$")) %>%
+    stack()
 }
 
-#VI) Assessor
+#VI) Worldclim
+# Check the data dir if worlclims are already processed
+if(file.exists(paste0(data_dir,"wc2.1_30s_wind_12.tif"))){
+  worldclim_rasters <- paste0(data_dir,c(list.files(path=data_dir,pattern="\\bwc2.1_30s_prec.*"),
+                                         list.files(path=data_dir,pattern="\\bwc2.1_30s_srad.*"),
+                                         list.files(path=data_dir,pattern="\\bwc2.1_30s_wind.*"))) %>%
+    stack()
+} else  {
+  worldclim_list <- c(list.files(path=data_dir,pattern="\\bwc2.1_30s_prec.*"),
+                      list.files(path=data_dir,pattern="\\bwc2.1_30s_srad.*"),
+                      list.files(path=data_dir,pattern="\\bwc2.1_30s_wind.*"))
+  if(length(worldclim_list)<37){
+    # Set list to source dir
+    worldclim_list <- c(list.files(path=WorldClim_dir,pattern="\\bwc2.1_30s_prec.*"),
+                        list.files(path=WorldClim_dir,pattern="\\bwc2.1_30s_srad.*"),
+                        list.files(path=WorldClim_dir,pattern="\\bwc2.1_30s_wind.*"))
+    for(worldclim in worldclim_list){
+      #Read in bioclim layers
+      worldclim_layer <- raster(paste0(WorldClim_dir,"/",worldclim))
+      #printing datum, if projection is not EPSG4326 | WSG84 then recode for reprojection!
+      print(crs(worldclim_layer, asText = TRUE))
+      #n.b. suggested to build a bounding box in that co-ords & then crop before reprojection, due to massive files
+      if(grepl("WGS84", crs(worldclim_layer, asText = TRUE))){
+        # Crop & Mask to LA
+        worldclim_layer <- crop(worldclim_layer,LA_County_Perimeter)
+        worldclim_layer <- mask(worldclim_layer,LA_County_Perimeter)
+        # Crop bioclim to bbox around LA County
+        # Output to LA dir
+        raster::writeRaster(worldclim_layer,paste0(data_dir,worldclim),overwrite=TRUE)
+      } else {print('Coordinate system requires reprojection to continue!')}
+    }
+  }
+  worldclim_rasters <- paste0(data_dir,c(list.files(path=data_dir,pattern="\\bwc2.1_30s_prec.*"),
+                                         list.files(path=data_dir,pattern="\\bwc2.1_30s_srad.*"),
+                                         list.files(path=data_dir,pattern="\\bwc2.1_30s_wind.*"))) %>%
+    stack()
+}
 
-#We are just interested in location & building age
+#VII) Terrain data
+if(file.exists(paste0(data_dir,"Elevation.tif"))){
+  LA_County_Elevation <- raster(paste0(data_dir,"Elevation.tif"))
+} else  {
+  # Get Elevation file
+  Elevation_raster <- raster(paste0(elevation_dir,"/srtm_13_06.tif"))
+  # Crop & Mask to LA
+  Elevation_raster <- crop(Elevation_raster,LA_County_Perimeter)
+  Elevation_raster <- mask(Elevation_raster,LA_County_Perimeter)
+  # Output to LA dir
+  raster::writeRaster(Elevation_raster,paste0(data_dir,'Elevation.tif'),overwrite=TRUE)
+  LA_County_Elevation <- raster(paste0(data_dir,"Elevation.tif"))
+}
 
-if(file.exists(paste0(data_dir,"ParcelData_2021.csv"))){
+#Calculate slope & aspect
+LA_County_Slope <- terra::terrain(LA_County_Elevation,'slope',units='radians')
+LA_County_Aspect <- terra::terrain(LA_County_Elevation,'aspect',units='radians')
+
+#VIII) Assessor
+# Check the data dir if Parcel Data is processed
+if(file.exists(paste0(data_dir,"ParcelData_2021_12.csv"))){
   LA_County_Parcels <- paste0(data_dir,list.files(path=data_dir,pattern="ParcelData_2021_.*\\.csv$")) %>%
     lapply(read_csv) %>% bind_rows()
+  LA_County_Parcels <- LA_County_Parcels[complete.cases(LA_County_Parcels),]
 } else  {
   LA_County_Parcels <- read_csv(paste0(assessor_dir,"/Parcel_Data_2021_Table_8468414499611436475.csv"))
-  #Zip Code...1: 9 digit zip
   #Property Use Type: SFR- Single Family Residence, NA, VAC- Vacant, C/I- Commercial/Industrial, R-I- ?Multi-family?, CND- Condominium
   #Year Built: Year 50%+ of the original structure was complete
   #Effective Year: Last year of any 'substantial' new construction or major rehabilitation.
-  LA_County_Parcels <- LA_County_Parcels[c('Zip Code...1','Property Use Type','Year Built','Effective Year','Location Latitude','Location Longitude')] %>% as_tibble(.name_repair = 'universal')
+  #Total Value: Tax assessed value, this doesn't represent market value. Assessed at sale & capped at 2% per year increase
+  #Number of Buildings:
+  #Number of Bathrooms:
+  #Number of Units:
+  #Square Footage:
+  LA_County_Parcels <- LA_County_Parcels[c('Property Use Type','Year Built','Effective Year','Total Value','Number of Buildings','Number of Bathrooms','Square Footage','Number of Units','Location Latitude','Location Longitude')] %>% as_tibble(.name_repair = 'universal')
+  
+  LA_County_Parcels$Property.Use.Type <- as.factor(LA_County_Parcels$Property.Use.Type)
   
   #Split into 5 csv
   rowCount <- nrow(LA_County_Parcels)
-  splits <- 6
+  splits <- 12
   rowGroups <- cut(
     seq_len(rowCount),
     breaks = splits,
@@ -320,11 +402,114 @@ if(file.exists(paste0(data_dir,"ParcelData_2021.csv"))){
     write_csv(split_list[[i]],paste0("LA_Data/ParcelData_2021_",i,".csv"))
     i <- i + 1
   }
-  
+  LA_County_Parcels <- LA_County_Parcels[complete.cases(LA_County_Parcels),]
+  rm(split_list)
 }
+
+#IX) Extract data from the datasets based on the assessor points
+
+#convert assessor points into spatial features
+assessor_points <- st_as_sf(LA_County_Parcels, coords=c("Location.Longitude","Location.Latitude"), crs = 4326)
+rm(LA_County_Parcels)
+
+#Set Palisades & Eaton Fire Perimeter to have a value of 1
+Eaton_Perimeter$Eaton <- 1
+Palisades_Perimeter$Palisades <- 1
+
+#Extract WUI
+extracted_WUI <- raster::extract(LA_County_WUI,assessor_points)
+rm(LA_County_WUI)
+#dataframe
+extracted_WUI <- as.data.frame(extracted_WUI)
+
+#Extract WHP
+extracted_WHP <- raster::extract(LA_County_WHP,assessor_points)
+rm(LA_County_WHP)
+#dataframe
+extracted_WHP <- as.data.frame(extracted_WHP)
+
+#Extract bioclim
+extracted_bioclim <- raster::extract(bioclim_rasters,assessor_points)
+rm(bioclim_rasters)
+#dataframe
+extracted_bioclim <- as.data.frame(extracted_bioclim)
+
+#Extract worldclim
+extracted_worldclim <- raster::extract(worldclim_rasters,assessor_points)
+rm(worldclim_rasters)
+#dataframe
+extracted_worldclim <- as.data.frame(extracted_worldclim)
+
+#Extract Elevation, Slope & Aspect
+extracted_elevation <- raster::extract(LA_County_Elevation,assessor_points)
+rm(LA_County_Elevation)
+extracted_elevation <- as.data.frame(extracted_elevation)
+
+extracted_slope <- raster::extract(LA_County_Slope,assessor_points)
+rm(LA_County_Slope)
+extracted_slope <- as.data.frame(extracted_slope)
+
+extracted_aspect <- raster::extract(LA_County_Aspect,assessor_points)
+rm(LA_County_Aspect)
+extracted_aspect <- as.data.frame(extracted_aspect)
+
+#Load in data
+#Change N/As in Eaton & Palisades to 0s
+assessor_points <- st_join(assessor_points,Eaton_Perimeter['Eaton'])
+assessor_points$Eaton[is.na(assessor_points$Eaton)] <- 0
+assessor_points <- st_join(assessor_points,Palisades_Perimeter['Palisades'])
+assessor_points$Palisades[is.na(assessor_points$Palisades)] <- 0
+
+#Load in WHP & WUI
+assessor_points$WUI <- extracted_WUI$extracted_WUI
+rm(extracted_WUI)
+assessor_points$WHP <- extracted_WHP$extracted_WHP
+rm(extracted_WHP)
+
+
+#load in the bioclim 1 by 1, joins of this size are not advisable.
+for(col in names(extracted_bioclim)){
+  assessor_points[[col]] <- extracted_bioclim[[col]]
+}
+rm(col,extracted_bioclim)
+
+
+#load in the worlclim 1 by 1, joins of this size are not advisable.
+for(col in names(extracted_worldclim)){
+  assessor_points[[col]] <- extracted_worldclim[[col]]
+}
+rm(col,extracted_worldclim)
+
+#Factor Eaton & Palisades
+assessor_points$Eaton <- as.factor(assessor_points$Eaton)
+assessor_points$Palisades <- as.factor(assessor_points$Palisades)
+
+
+
+#Keep complete cases & Remove cases where year.built is zero
+assessor_points <- na.omit(assessor_points)
+assessor_points <- assessor_points[assessor_points$Year.Built != 0,]
+
+#If effective year is zero, set equal to year built
+assessor_points <- assessor_points %>%
+  mutate(
+    Effective.Year = if_else(Effective.Year == 0, Year.Built, Effective.Year)
+  )
 
 #VII) Lead Data
 #nb Lead data is not a part of this git
 sensitive_dir <- RVar_sensitive
 sensitive_filename <- RVar_sensitive_filename
 read_csv(paste0(RVar_sensitive,RVar_sensitive_filename))
+
+
+# Correlations check:
+temp <- assessor_points[sample(nrow(assessor_points),10000), ] %>% as.data.frame
+is_numeric_col <- sapply(temp,is.numeric)
+temp <- temp[,is_numeric_col] %>% as.data.frame
+temp2 <- cor(temp,method='spearman')
+collinear_data <- findCorrelation(abs(temp2),cutoff=0.7,verbose=TRUE)
+collinear_data[[length(collinear_data)]] <- 2
+corrplot(temp2)
+
+
